@@ -1,0 +1,15 @@
+fra-de-ping.vultr.com
+ams-nl-ping.vultr.com
+par-fr-ping.vultr.com
+lon-gb-ping.vultr.com
+hnd-jp-ping.vultr.com
+sgp-ping.vultr.com
+nj-us-ping.vultr.com
+il-us-ping.vultr.com
+wa-us-ping.vultr.com
+ga-us-ping.vultr.com
+fl-us-ping.vultr.com
+tx-us-ping.vultr.com
+sjo-ca-us-ping.vultr.com
+lax-ca-us-ping.vultr.com
+syd-au-ping.vultr.com
