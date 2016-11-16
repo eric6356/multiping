@@ -129,8 +129,8 @@ def init_tasks(arguments):
 
 
 def init_content(window, task_list):
-    curses.start_color()
     curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_RED, -1)
     window.addstr('HOST'.ljust(task_list[0].host_column_length) + '  ' + 'STATUS\n', curses.A_BOLD)
 
     for i, task in enumerate(task_list):
@@ -147,7 +147,7 @@ def update_content(window, task_list):
         task.update_status()
         args = [i + 1, task.host_column_length + 2, task.status_column + '\n']
         if task.process.returncode:
-            args.append(curses.COLOR_RED)
+            args.append(curses.color_pair(1))
         window.addstr(*args)
     window.refresh()
 
