@@ -64,7 +64,7 @@ class Task(object):
             if not stdout:
                 _, stderr = await process.communicate()
                 if stderr:
-                    self.add_output(cid + 1, stderr.decode(), curses.color_pair(1))
+                    self.add_output(cid + 1, stderr.decode().strip(), curses.color_pair(1))
                     self.window.refresh()
                 break
 
