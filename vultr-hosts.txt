@@ -13,3 +13,4 @@ tx-us-ping.vultr.com
 sjo-ca-us-ping.vultr.com
 lax-ca-us-ping.vultr.com
 syd-au-ping.vultr.com
+foo.bar
