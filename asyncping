@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import curses
 import re
+import signal
 
 
 class Task(object):
@@ -30,10 +31,19 @@ class Task(object):
         window.refresh()
 
         loop = asyncio.get_event_loop()
-        coros = [self.ping(host, i) for i, host in enumerate(hosts)]
-        commands = asyncio.gather(*coros)
+        self.coros = [self.ping(host, i) for i, host in enumerate(hosts)]
+        commands = asyncio.gather(*self.coros)
+
+        loop.add_signal_handler(signal.SIGINT, self.sigint_handler)
+
         loop.run_until_complete(commands)
         loop.close()
+
+    @property
+    def sigint_handler(self):
+        def real_handler(*args):
+            pass
+        return real_handler
 
     def add_output(self, y, output, *args):
         if len(output) > self.output_col_length:
@@ -90,24 +100,24 @@ def get_arguments():
     """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('host', nargs='*', help='host to ping')
-    parser.add_argument('--input', metavar='input_file', help='file contains hosts, one host per line',
+    parser.add_argument('--host', metavar='HOST', dest='hosts', nargs='*', help='host to ping')
+    parser.add_argument('--host-file', dest='file', help='file contains hosts, one host per line',
                         type=argparse.FileType('r'))
 
-    arguments = parser.parse_args()
+    arguments, unknown = parser.parse_known_args()
 
-    if arguments.host and arguments.input:
+    if arguments.hosts and arguments.file:
         parser.error('too many arguments, you can NOT specify both host(s) and input file')
 
-    if not arguments.host and not arguments.input:
+    if not arguments.hosts and not arguments.file:
         parser.error('too few arguments, you must specify input file or at least one host')
 
-    arguments.host_list = arguments.host or arguments.input.read().split()
+    arguments.host_list = arguments.hosts or arguments.file.read().split()
 
-    return arguments
+    return arguments, unknown
 
 
-def main(window, arguments):
+def main(window, arguments, extra):
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
     curses.curs_set(0)
@@ -125,15 +135,18 @@ def main(window, arguments):
         window.addstr('Press any key to exit...')
 
     else:
-        Task(window, arguments.host_list, '-c', '30', '-i', '0.1')
+        Task(window, arguments.host_list, *extra)
         window.addstr(len(arguments.host_list) + 1, 0, 'Press any key to exit...')
 
     window.refresh()
-    window.getch()
-    curses.endwin()
+    try:
+        window.getch()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        curses.endwin()
 
 
 if __name__ == '__main__':
-    args = get_arguments()
-    curses.wrapper(main, args)
+    curses.wrapper(main, *get_arguments())
 
