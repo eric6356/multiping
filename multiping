@@ -127,7 +127,7 @@ class MultiPing(object):
 
 
 def parse_rtt(line):
-    pattern = r'^(round-trip|rtt) min/avg/max/(std|m)dev = (?P<min>.+)/(?P<avg>.+)/(?P<max>.+)/(?P<dev>.+) ms$'
+    pattern = r'^(round-trip|rtt) min/avg/max/(std|m)dev = (?P<min>.+)/(?P<avg>.+)/(?P<max>.+)/(?P<dev>.+) ms(, pipe (?P<pipe>\d+))?$'
     return re.match(pattern, line)
 
 
