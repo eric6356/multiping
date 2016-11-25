@@ -1,5 +1,9 @@
 # Multi Ping
-ping multiple hosts at the same time
+Ping multiple hosts and/or IP in one window.
+
+## Requirements
+1. UNIX based system.
+2. Python 3.4 or higher.
 
 ## Usage
 ```
