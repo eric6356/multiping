@@ -27,3 +27,6 @@ Any extra arguments will be passed to each ping task.
 
 `multiping --host-file vultr-hosts.txt -i 0.1`↓  
 ![](https://raw.githubusercontent.com/eric6356/multiping/master/media/multiping-file.gif)
+
+## License
+[WTFPL](http://www.wtfpl.net/)
