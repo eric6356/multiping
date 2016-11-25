@@ -7,7 +7,7 @@ import re
 import signal
 
 
-class Task(object):
+class MultiPing(object):
     def __init__(self, window, hosts, *args):
         self.window = window
         self.hosts = hosts
@@ -131,20 +131,15 @@ def get_arguments():
     """get arguments from user input
     :return:Namespace object
     """
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--host', metavar='HOST', dest='hosts', nargs='*', help='host to ping')
-    parser.add_argument('--host-file', dest='file', help='file contains hosts, one host per line',
-                        type=argparse.FileType('r'))
+    parser = argparse.ArgumentParser(description='Ping multiple hosts and/or IP in one window.',
+                                     epilog='Any extra arguments will be passed to each ping task.')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--host', metavar='HOST', dest='hosts', nargs='*', help='host to ping')
+    group.add_argument('--host-file', dest='file', help='file contains hosts, one host per line',
+                       type=argparse.FileType('r'))
+    parser.add_argument('extra', nargs='*', help='extra arguments for ping command')
 
     arguments, unknown = parser.parse_known_args()
-
-    if arguments.hosts and arguments.file:
-        parser.error('too many arguments, you can NOT specify both host(s) and input file')
-
-    if not arguments.hosts and not arguments.file:
-        parser.error('too few arguments, you must specify input file or at least one host')
-
     arguments.host_list = arguments.hosts or arguments.file.read().split()
 
     return arguments, unknown
@@ -169,7 +164,7 @@ def main(window, arguments, extra):
         window.addstr('Press any key to exit...')
 
     else:
-        Task(window, arguments.host_list, *extra).run()
+        MultiPing(window, arguments.host_list, *extra).run()
         window.addstr(len(arguments.host_list) + 1, 0, 'Press any key to exit...')
 
     window.refresh()
