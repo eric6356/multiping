@@ -1,5 +1,5 @@
 # Multi Ping
-Ping multiple hosts and/or IP in one window.
+Ping multiple hosts and/or IPs in one window.
 
 ## Requirements
 1. UNIX based system.
