@@ -1,0 +1,170 @@
+#!/usr/bin/env python
+"""Ping multiple hosts at the same time
+Usage1:
+    multiping host1 host2
+Usage2:
+    multiping --input hosts.txt
+"""
+
+import time
+import curses
+import subprocess
+import re
+import argparse
+
+
+class Task(object):
+    """Ping Task
+    """
+
+    def __init__(self, count, wait, host, host_column_length):
+        self.count = count
+        self.wait = wait
+        self.host = host
+        self.host_column_length = host_column_length
+
+        if len(self.host) <= host_column_length:
+            self.host_column = self.host.ljust(host_column_length)
+        else:
+            self.host_column = self.host[:host_column_length - 4] + '... '
+
+        self.command = 'ping -q -c {} -i {} {}'.format(count, wait, host)  # todo: fully support ping arguments
+        self.process = subprocess.Popen(self.command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        self.status_column = 'executing.'
+
+    def update_status(self, refresh_dots=True):
+        """update status column
+        :param refresh_dots: executing. -> executing...
+        :return:updated status
+        """
+        if self.process.returncode is not None:
+            return self.status_column
+
+        return_code = self.process.poll()
+        if return_code is None:
+            if refresh_dots:
+                current_dots_count = self.status_column.count('.')
+                new_dots = '.' * (current_dots_count % 3 + 1)
+                self.status_column = self.status_column.rstrip('.') + new_dots
+        else:
+            # process terminated, call communicate to get output
+            stdout, stderr = self.process.communicate()
+            if return_code == 68:
+                self.status_column = stderr.decode()
+            elif return_code in (0, 2):
+                lines = stdout.decode().split('\n')
+                _, _, loss_rate = self.parse_loss(lines[3])
+                self.status_column = 'loss: {}\t'.format(loss_rate)
+                if return_code == 0:
+                    _, average, _, _ = self.parse_round_trip(lines[4])
+                    self.status_column += 'avg: {}ms'.format(average)
+            else:
+                self.status_column = 'unknown return code from ping: {}'.format(return_code)
+        return self.status_column
+
+    def parse_loss(self, string):
+        transmitted = received = loss = None
+        pattern = r'^(\d+) packets transmitted, (\d+) packets received, (.+) packet loss$'
+        res = re.match(pattern, string)
+        if res:
+            transmitted, received, loss = res.groups()
+        return transmitted, received, loss
+
+    def parse_round_trip(self, string):
+        mini = avg = maxi = stddev = None
+        pattern = r'^round-trip min/avg/max/stddev = (.+)/(.+)/(.+)/(.+) ms$'
+        res = re.match(pattern, string)
+        if res:
+            mini, avg, maxi, stddev = res.groups()
+        return mini, avg, maxi, stddev
+
+    def parse_result(self, stdout):
+
+        transmitted = received = loss = mini = avg = maxi = stddev = None
+        lines = stdout.decode().split('\n')
+        pattern1 = r'^(\d+) packets transmitted, (\d+) packets received, (.+) packet loss$'
+        pattern2 = r'^round-trip min/avg/max/stddev = (.+)/(.+)/(.+)/(.+) ms$'
+
+        res = re.match(pattern1, lines[3])
+        if res:
+            transmitted, received, loss = res.groups()
+
+        res = re.match(pattern2, lines[4])
+        if res:
+            mini, avg, maxi, stddev = res.groups()
+
+        return transmitted, received, loss, mini, avg, maxi, stddev
+
+
+def get_arguments():
+    """get arguments from user input
+    :return:Namespace object
+    """
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('host', nargs='*', help='host to ping')
+    parser.add_argument('--input', metavar='input_file', help='file contains hosts, one host per line',
+                        type=argparse.FileType('r'))
+    parser.add_argument('-c', metavar='count', help="same as ping -c, 50 by default", type=int, default=50)
+    parser.add_argument('-i', metavar='wait', help="same as ping -i, 0.1 by default", type=float, default=0.1)
+
+    arguments = parser.parse_args()
+
+    if arguments.host and arguments.input:
+        parser.error('too many arguments, you can NOT specify both host(s) and input file')
+
+    if not arguments.host and not arguments.input:
+        parser.error('too few arguments, you must specify input file or at least one host')
+
+    arguments.host_list = arguments.host or arguments.input.read().split()
+
+    return arguments
+
+
+def init_tasks(arguments):
+    max_host_length = max(len(host) for host in arguments.host_list)
+    max_host_length = min(max_host_length, 28)
+    return [Task(arguments.c, arguments.i, host, max_host_length) for host in arguments.host_list]
+
+
+def init_content(window, task_list):
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_RED, -1)
+    window.addstr('HOST'.ljust(task_list[0].host_column_length) + '  ' + 'STATUS\n', curses.A_BOLD)
+
+    for i, task in enumerate(task_list):
+        line = task.host_column + '  ' + task.status_column + '\n'
+        window.addstr(i + 1, 0, line)
+
+    window.refresh()
+
+    return window
+
+
+def update_content(window, task_list):
+    for i, task in enumerate(task_list):
+        task.update_status()
+        args = [i + 1, task.host_column_length + 2, task.status_column + '\n']
+        if task.process.returncode:
+            args.append(curses.color_pair(1))
+        window.addstr(*args)
+    window.refresh()
+
+
+def main(window, arguments):
+    tasks = init_tasks(arguments)
+    init_content(window, tasks)
+    while any(task.process.returncode is None for task in tasks):
+        update_content(window, tasks)
+        time.sleep(0.5)
+
+    window.addstr(len(tasks)+1, 0, 'press any key to exit')
+    window.refresh()
+    window.getch()
+    curses.endwin()
+
+
+if __name__ == '__main__':
+    args = get_arguments()
+    curses.wrapper(main, args)

@@ -1,170 +1,180 @@
-#!/usr/bin/env python
-"""Ping multiple hosts at the same time
-Usage1:
-    multiping host1 host2
-Usage2:
-    multiping --input hosts.txt
-"""
+#!/usr/bin/env python3
 
-import time
-import curses
-import subprocess
-import re
 import argparse
+import asyncio
+import curses
+import re
+import signal
 
 
-class Task(object):
-    """Ping Task
-    """
+class MultiPing(object):
+    def __init__(self, window, hosts, *args):
+        self.window = window
+        self.hosts = hosts
+        self.args = args
+        max_host_length = max(len(host) for host in hosts)
+        max_host_length = min(max_host_length, 28)
+        self.host_col_length = max_host_length
 
-    def __init__(self, count, wait, host, host_column_length):
-        self.count = count
-        self.wait = wait
-        self.host = host
-        self.host_column_length = host_column_length
+        _, width = window.getmaxyx()
+        self.avg_col_pos = width - 7
+        self.loss_col_pos = self.avg_col_pos - 7
+        self.tr_col_pos = self.loss_col_pos - 8
+        self.output_col_length = self.tr_col_pos - self.host_col_length - 2
 
-        if len(self.host) <= host_column_length:
-            self.host_column = self.host.ljust(host_column_length)
-        else:
-            self.host_column = self.host[:host_column_length - 4] + '... '
+        self.init_window()
 
-        self.command = 'ping -q -c {} -i {} {}'.format(count, wait, host)  # todo: fully support ping arguments
-        self.process = subprocess.Popen(self.command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.result_dict = {i: {'cid': i, 'host': host} for i, host in enumerate(self.hosts)}
 
-        self.status_column = 'executing.'
-
-    def update_status(self, refresh_dots=True):
-        """update status column
-        :param refresh_dots: executing. -> executing...
-        :return:updated status
-        """
-        if self.process.returncode is not None:
-            return self.status_column
-
-        return_code = self.process.poll()
-        if return_code is None:
-            if refresh_dots:
-                current_dots_count = self.status_column.count('.')
-                new_dots = '.' * (current_dots_count % 3 + 1)
-                self.status_column = self.status_column.rstrip('.') + new_dots
-        else:
-            # process terminated, call communicate to get output
-            stdout, stderr = self.process.communicate()
-            if return_code == 68:
-                self.status_column = stderr.decode()
-            elif return_code in (0, 2):
-                lines = stdout.decode().split('\n')
-                _, _, loss_rate = self.parse_loss(lines[3])
-                self.status_column = 'loss: {}\t'.format(loss_rate)
-                if return_code == 0:
-                    _, average, _, _ = self.parse_round_trip(lines[4])
-                    self.status_column += 'avg: {}ms'.format(average)
+    def init_window(self):
+        self.window.addstr(' '.join(['HOST'.ljust(self.host_col_length),
+                                     'PING OUTPUT'.ljust(self.output_col_length),
+                                     '    T/R   LOSS AVG(ms)']), curses.A_STANDOUT)
+        for i, host in enumerate(self.hosts):
+            if len(host) <= self.host_col_length:
+                self.window.addstr(i + 1, 0, host.ljust(self.host_col_length))
             else:
-                self.status_column = 'unknown return code from ping: {}'.format(return_code)
-        return self.status_column
+                self.window.addstr(i + 1, 0, host[:self.host_col_length - 4] + '... ')
+        self.window.refresh()
 
-    def parse_loss(self, string):
-        transmitted = received = loss = None
-        pattern = r'^(\d+) packets transmitted, (\d+) packets received, (.+) packet loss$'
-        res = re.match(pattern, string)
-        if res:
-            transmitted, received, loss = res.groups()
-        return transmitted, received, loss
+    def run(self):
+        loop = asyncio.get_event_loop()
 
-    def parse_round_trip(self, string):
-        mini = avg = maxi = stddev = None
-        pattern = r'^round-trip min/avg/max/stddev = (.+)/(.+)/(.+)/(.+) ms$'
-        res = re.match(pattern, string)
-        if res:
-            mini, avg, maxi, stddev = res.groups()
-        return mini, avg, maxi, stddev
+        coros = [self.ping(host, i) for i, host in enumerate(self.hosts)]
+        commands = asyncio.gather(*coros)
 
-    def parse_result(self, stdout):
+        loop.add_signal_handler(signal.SIGINT, lambda: 0)
 
-        transmitted = received = loss = mini = avg = maxi = stddev = None
-        lines = stdout.decode().split('\n')
-        pattern1 = r'^(\d+) packets transmitted, (\d+) packets received, (.+) packet loss$'
-        pattern2 = r'^round-trip min/avg/max/stddev = (.+)/(.+)/(.+)/(.+) ms$'
+        loop.run_until_complete(commands)
 
-        res = re.match(pattern1, lines[3])
-        if res:
-            transmitted, received, loss = res.groups()
+        self.embolden_result()
 
-        res = re.match(pattern2, lines[4])
-        if res:
-            mini, avg, maxi, stddev = res.groups()
+        loop.close()
 
-        return transmitted, received, loss, mini, avg, maxi, stddev
+    def embolden_result(self):
+        l = [r for r in self.result_dict.values() if r.get('loss')]
+        l.sort(key=lambda r: float(r['loss'].rstrip('%')))
+        if l[0]['loss'] != l[-1]['loss']:
+            for r in l:
+                if r['loss'] in (l[0]['loss'], l[-1]['loss']):
+                    self.add_loss(r['cid'] + 1, r['loss'], curses.A_BOLD)
+
+        l = [r for r in self.result_dict.values() if r.get('avg')]
+        l.sort(key=lambda r: float(r['avg']))
+        if l[0]['avg'] != l[-1]['avg']:
+            for r in l:
+                if r['avg'] in (l[0]['avg'], l[-1]['avg']):
+                    self.add_avg(r['cid'] + 1, r['avg'], curses.A_BOLD)
+
+    def add_output(self, y, output, *args):
+        if len(output) > self.output_col_length:
+            pos = (self.output_col_length - 3) // 2
+            output = '{}...{}'.format(output[:pos], output[-pos:])
+        self.window.addstr(y, self.host_col_length + 1, output.ljust(self.output_col_length), *args)
+
+    def add_avg(self, y, avg, *args):
+        self.window.addstr(y, self.avg_col_pos, avg.rjust(7), *args)
+
+    def add_loss(self, y, loss, *args):
+        self.window.addstr(y, self.loss_col_pos, loss.rjust(6), *args)
+
+    def add_tr(self, y, trans, recv, *args):
+        self.window.addstr(y, self.tr_col_pos, '{}/{}'.format(trans, recv).rjust(7), *args)
+
+    async def ping(self, host, cid):
+        process = await asyncio.create_subprocess_exec(
+            'ping',
+            host,
+            *self.args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        while True:
+            stdout = await process.stdout.readline()
+            if not stdout:
+                _, stderr = await process.communicate()
+                if stderr:
+                    self.add_output(cid + 1, stderr.decode().strip(), curses.color_pair(1))
+                    self.window.refresh()
+                break
+
+            line = stdout.decode().strip()
+            self.add_output(cid + 1, line)
+
+            parse_result = parse_rtt(line) or parse_loss(line)
+            if parse_result:
+                d = self.result_dict[cid]
+                d.update(**parse_result.groupdict())
+
+                if 'avg' in d:
+                    self.add_avg(cid + 1, d['avg'])
+
+                trans, recv, loss = d.get('trans', ''), d.get('recv', ''), d.get('loss', '')
+                if trans:
+                    self.add_loss(cid + 1, loss)
+                    self.add_tr(cid + 1, trans, recv)
+
+            self.window.refresh()
+
+
+def parse_rtt(line):
+    pattern = r'^(round-trip|rtt) min/avg/max/(std|m)dev = (?P<min>.+)/(?P<avg>.+)/(?P<max>.+)/(?P<dev>.+) ms$'
+    return re.match(pattern, line)
+
+
+def parse_loss(line):
+    pattern = r'^(?P<trans>\d+) packets transmitted, (?P<recv>\d+) (packets )?received, (?P<loss>.+) packet loss(, time (?P<time>.+))?$'
+    return re.match(pattern, line)
 
 
 def get_arguments():
     """get arguments from user input
     :return:Namespace object
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Ping multiple hosts and/or IP in one window.',
+                                     epilog='Any extra arguments will be passed to each ping task.')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--host', metavar='HOST', dest='hosts', nargs='*', help='host to ping')
+    group.add_argument('--host-file', dest='file', help='file contains hosts, one host per line',
+                       type=argparse.FileType('r'))
+    parser.add_argument('extra', nargs='*', help='extra arguments for ping command')
 
-    parser.add_argument('host', nargs='*', help='host to ping')
-    parser.add_argument('--input', metavar='input_file', help='file contains hosts, one host per line',
-                        type=argparse.FileType('r'))
-    parser.add_argument('-c', metavar='count', help="same as ping -c, 50 by default", type=int, default=50)
-    parser.add_argument('-i', metavar='wait', help="same as ping -i, 0.1 by default", type=float, default=0.1)
+    arguments, unknown = parser.parse_known_args()
+    arguments.host_list = arguments.hosts or arguments.file.read().split()
 
-    arguments = parser.parse_args()
-
-    if arguments.host and arguments.input:
-        parser.error('too many arguments, you can NOT specify both host(s) and input file')
-
-    if not arguments.host and not arguments.input:
-        parser.error('too few arguments, you must specify input file or at least one host')
-
-    arguments.host_list = arguments.host or arguments.input.read().split()
-
-    return arguments
+    return arguments, unknown
 
 
-def init_tasks(arguments):
-    max_host_length = max(len(host) for host in arguments.host_list)
-    max_host_length = min(max_host_length, 28)
-    return [Task(arguments.c, arguments.i, host, max_host_length) for host in arguments.host_list]
-
-
-def init_content(window, task_list):
+def main(window, arguments, extra):
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
-    window.addstr('HOST'.ljust(task_list[0].host_column_length) + '  ' + 'STATUS\n', curses.A_BOLD)
+    curses.curs_set(0)
 
-    for i, task in enumerate(task_list):
-        line = task.host_column + '  ' + task.status_column + '\n'
-        window.addstr(i + 1, 0, line)
+    y, x = window.getmaxyx()
+    errors = []
+    if y < len(arguments.host_list) + 2:
+        errors.append('not enough lines')
+    if x < 80:
+        errors.append('not enough columns')
+
+    if errors:
+        [window.addstr('ERROR: {}\n'.format(error), curses.color_pair(1)) for error in errors]
+        window.addstr('Your window is too small to properly display results, resize it and try again.\n',
+                      curses.color_pair(1))
+        window.addstr('Press any key to exit...')
+
+    else:
+        MultiPing(window, arguments.host_list, *extra).run()
+        window.addstr(len(arguments.host_list) + 1, 0, 'Press any key to exit...')
 
     window.refresh()
-
-    return window
-
-
-def update_content(window, task_list):
-    for i, task in enumerate(task_list):
-        task.update_status()
-        args = [i + 1, task.host_column_length + 2, task.status_column + '\n']
-        if task.process.returncode:
-            args.append(curses.color_pair(1))
-        window.addstr(*args)
-    window.refresh()
-
-
-def main(window, arguments):
-    tasks = init_tasks(arguments)
-    init_content(window, tasks)
-    while any(task.process.returncode is None for task in tasks):
-        update_content(window, tasks)
-        time.sleep(0.5)
-
-    window.addstr(len(tasks)+1, 0, 'press any key to exit')
-    window.refresh()
-    window.getch()
-    curses.endwin()
+    try:
+        window.getch()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        curses.endwin()
 
 
 if __name__ == '__main__':
-    args = get_arguments()
-    curses.wrapper(main, args)
+    curses.wrapper(main, *get_arguments())
