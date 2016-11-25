@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 
+import sys
+
+try:
+    import asyncio
+except ImportError:
+    sys.exit('Error: Python 3.4 or higher is required.')
+
 import argparse
-import asyncio
 import curses
 import re
 import signal
@@ -53,18 +59,20 @@ class MultiPing(object):
 
     def embolden_result(self):
         l = [r for r in self.result_dict.values() if r.get('loss')]
-        l.sort(key=lambda r: float(r['loss'].rstrip('%')))
-        if l[0]['loss'] != l[-1]['loss']:
-            for r in l:
-                if r['loss'] in (l[0]['loss'], l[-1]['loss']):
-                    self.add_loss(r['cid'] + 1, r['loss'], curses.A_BOLD)
+        if len(l) > 2:
+            l.sort(key=lambda r: float(r['loss'].rstrip('%')))
+            if l[0]['loss'] != l[-1]['loss']:
+                for r in l:
+                    if r['loss'] in (l[0]['loss'], l[-1]['loss']):
+                        self.add_loss(r['cid'] + 1, r['loss'], curses.A_BOLD)
 
         l = [r for r in self.result_dict.values() if r.get('avg')]
-        l.sort(key=lambda r: float(r['avg']))
-        if l[0]['avg'] != l[-1]['avg']:
-            for r in l:
-                if r['avg'] in (l[0]['avg'], l[-1]['avg']):
-                    self.add_avg(r['cid'] + 1, r['avg'], curses.A_BOLD)
+        if len(l) > 2:
+            l.sort(key=lambda r: float(r['avg']))
+            if l[0]['avg'] != l[-1]['avg']:
+                for r in l:
+                    if r['avg'] in (l[0]['avg'], l[-1]['avg']):
+                        self.add_avg(r['cid'] + 1, r['avg'], curses.A_BOLD)
 
     def add_output(self, y, output, *args):
         if len(output) > self.output_col_length:
@@ -81,8 +89,9 @@ class MultiPing(object):
     def add_tr(self, y, trans, recv, *args):
         self.window.addstr(y, self.tr_col_pos, '{}/{}'.format(trans, recv).rjust(7), *args)
 
-    async def ping(self, host, cid):
-        process = await asyncio.create_subprocess_exec(
+    @asyncio.coroutine
+    def ping(self, host, cid):
+        process = yield from asyncio.create_subprocess_exec(
             'ping',
             host,
             *self.args,
@@ -90,9 +99,9 @@ class MultiPing(object):
             stderr=asyncio.subprocess.PIPE
         )
         while True:
-            stdout = await process.stdout.readline()
+            stdout = yield from process.stdout.readline()
             if not stdout:
-                _, stderr = await process.communicate()
+                _, stderr = yield from process.communicate()
                 if stderr:
                     self.add_output(cid + 1, stderr.decode().strip(), curses.color_pair(1))
                     self.window.refresh()
@@ -127,17 +136,23 @@ def parse_loss(line):
     return re.match(pattern, line)
 
 
+class PingArgumentFormatter(argparse.HelpFormatter):
+    def add_usage(self, usage, actions, groups, prefix=None):
+        actions.append(argparse.ArgumentParser().add_argument('extra', nargs='*', help='extra arguments passed to ping task'))
+        return super().add_usage(usage, actions, groups, prefix)
+
+
 def get_arguments():
     """get arguments from user input
     :return:Namespace object
     """
     parser = argparse.ArgumentParser(description='Ping multiple hosts and/or IP in one window.',
-                                     epilog='Any extra arguments will be passed to each ping task.')
+                                     epilog='Any extra arguments will be passed to each ping task.',
+                                     formatter_class=PingArgumentFormatter)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--host', metavar='HOST', dest='hosts', nargs='*', help='host to ping')
     group.add_argument('--host-file', dest='file', help='file contains hosts, one host per line',
                        type=argparse.FileType('r'))
-    parser.add_argument('extra', nargs='*', help='extra arguments for ping command')
 
     arguments, unknown = parser.parse_known_args()
     arguments.host_list = arguments.hosts or arguments.file.read().split()
