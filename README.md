@@ -23,10 +23,10 @@ Any extra arguments will be passed to each ping task.
 
 ## Example
 `multiping --host localhost 8.8.8.8 foo.bar -i 0.1 -c 20`↓  
-![](https://raw.githubusercontent.com/eric6356/multiping/master/media/multiping.gif)
+[![asciicast](https://asciinema.org/a/96575.png)](https://asciinema.org/a/96575)
 
 `multiping --host-file vultr-hosts.txt -i 0.1`↓  
-![](https://raw.githubusercontent.com/eric6356/multiping/master/media/multiping-file.gif)
+[![asciicast](https://asciinema.org/a/96576.png)](https://asciinema.org/a/96576)
 
 ## License
 [WTFPL](http://www.wtfpl.net/)
